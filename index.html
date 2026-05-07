@@ -90,10 +90,6 @@
 <canvas id="canvas"></canvas>
 
 <script>
-// #region agent log
-fetch('http://127.0.0.1:7426/ingest/a0f57fc2-d65b-4152-b45d-ebcade88eb23',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e62763'},body:JSON.stringify({sessionId:'e62763',runId:'pre-fix',hypothesisId:'H1',location:'index.html:~92',message:'Page loaded (routing baseline)',data:{path:location.pathname,href:location.href,userAgent:navigator.userAgent},timestamp:Date.now()})}).catch(()=>{});
-// #endregion
-
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 
