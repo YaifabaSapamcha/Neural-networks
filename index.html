@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Neural Network Training Visualization</title>
+  <style>
+    html, body {
+      margin: 0;
+      overflow: hidden;
+      background: #020617;
+      height: 100%;
+      font-family: Arial, sans-serif;
+    }
+
+    canvas {
+      display: block;
+      background:
+        radial-gradient(circle at center, #071126 0%, #020617 70%);
+    }
+
+    .hud {
+      position: absolute;
+      top: 18px;
+      left: 18px;
+      color: #cbd5e1;
+      z-index: 10;
+      user-select: none;
+      pointer-events: none;
+    }
+
+    .hud h1 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: 1px;
+      color: #ffffff;
+    }
+
+    .hud p {
+      margin: 6px 0;
+      font-size: 13px;
+      color: #94a3b8;
+    }
+
+    .legend {
+      margin-top: 12px;
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+  </style>
+</head>
+<body>
+
+<div class="hud">
+  <h1>Neural Training Visualization</h1>
+  <p>Animated forward propagation + simulated live training feedback</p>
+
+  <div class="legend">
+    <div class="legend-item">
+      <div class="dot" style="background:#22d3ee;"></div>
+      Forward Signal
+    </div>
+
+    <div class="legend-item">
+      <div class="dot" style="background:#f472b6;"></div>
+      Active Learning
+    </div>
+
+    <div class="legend-item">
+      <div class="dot" style="background:#a78bfa;"></div>
+      Weight Updates
+    </div>
+  </div>
+</div>
+
+<canvas id="canvas"></canvas>
+
+<script>
+// #region agent log
+fetch('http://127.0.0.1:7426/ingest/a0f57fc2-d65b-4152-b45d-ebcade88eb23',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e62763'},body:JSON.stringify({sessionId:'e62763',runId:'pre-fix',hypothesisId:'H1',location:'index.html:~92',message:'Page loaded (routing baseline)',data:{path:location.pathname,href:location.href,userAgent:navigator.userAgent},timestamp:Date.now()})}).catch(()=>{});
+// #endregion
+
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resize);
+resize();
+
+/* =========================================================
+   Neural Network Data Structures
+========================================================= */
+
+class Neuron {
+  constructor(x, y, layer, index) {
+    this.x = x;
+    this.y = y;
+    this.layer = layer;
+    this.index = index;
+
+    this.radius = 10;
+
+    this.activation = Math.random();
+    this.targetActivation = Math.random();
+
+    this.energy = 0;
+    this.training = 0;
+
+    this.phase = Math.random() * Math.PI * 2;
+  }
+
+  update(dt) {
+    // Simulated training feedback
+    this.targetActivation += (Math.random() - 0.5) * 0.08;
+    this.targetActivation = Math.max(0, Math.min(1, this.targetActivation));
+
+    this.activation +=
+      (this.targetActivation - this.activation) * 0.08;
+
+    this.energy *= 0.95;
+    this.training *= 0.93;
+
+    this.phase += dt * 0.001;
+  }
+
+  excite(power = 1) {
+    this.energy = Math.min(1, this.energy + power * 0.7);
+    this.training = Math.min(1, this.training + power * 0.5);
+  }
+
+  draw() {
+    const pulse =
+      Math.sin(performance.now() * 0.002 + this.phase) * 0.5 + 0.5;
+
+    const activeGlow = this.energy * 40;
+    const r = this.radius + pulse * 1.5;
+
+    // Color interpolation
+    const cyan = [34, 211, 238];
+    const pink = [244, 114, 182];
+
+    const mix = this.activation;
+
+    const rr = cyan[0] * (1 - mix) + pink[0] * mix;
+    const gg = cyan[1] * (1 - mix) + pink[1] * mix;
+    const bb = cyan[2] * (1 - mix) + pink[2] * mix;
+
+    // Glow
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, r + activeGlow * 0.35, 0, Math.PI * 2);
+
+    const grad = ctx.createRadialGradient(
+      this.x,
+      this.y,
+      0,
+      this.x,
+      this.y,
+      r + activeGlow
+    );
+
+    grad.addColorStop(
+      0,
+      `rgba(${rr}, ${gg}, ${bb}, ${0.9})`
+    );
+
+    grad.addColorStop(
+      1,
+      `rgba(${rr}, ${gg}, ${bb}, 0)`
+    );
+
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Core node
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, r, 0, Math.PI * 2);
+
+    ctx.fillStyle =
+      `rgb(${rr}, ${gg}, ${bb})`;
+
+    ctx.shadowColor =
+      `rgb(${rr}, ${gg}, ${bb})`;
+
+    ctx.shadowBlur = 20 + activeGlow;
+
+    ctx.fill();
+
+    ctx.shadowBlur = 0;
+
+    // Inner highlight
+    ctx.beginPath();
+    ctx.arc(this.x - 2, this.y - 2, r * 0.4, 0, Math.PI * 2);
+
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.fill();
+  }
+}
+
+class Connection {
+  constructor(from, to) {
+    this.from = from;
+    this.to = to;
+
+    this.weight = Math.random() * 2 - 1;
+
+    this.signal = 0;
+    this.speed = 0.01 + Math.random() * 0.015;
+
+    this.pulses = [];
+  }
+
+  triggerPulse() {
+    this.pulses.push({
+      t: 0,
+      intensity: 0.5 + Math.random() * 0.5
+    });
+  }
+
+  update(dt) {
+    // Simulate training weight updates
+    this.weight += (Math.random() - 0.5) * 0.01;
+    this.weight = Math.max(-1, Math.min(1, this.weight));
+
+    for (let i = this.pulses.length - 1; i >= 0; i--) {
+      const p = this.pulses[i];
+
+      p.t += this.speed * dt;
+
+      if (p.t >= 1) {
+        this.to.excite(p.intensity);
+
+        this.pulses.splice(i, 1);
+      }
+    }
+  }
+
+  draw() {
+    const dx = this.to.x - this.from.x;
+    const dy = this.to.y - this.from.y;
+
+    // Weight brightness
+    const alpha = 0.15 + Math.abs(this.weight) * 0.35;
+
+    ctx.beginPath();
+    ctx.moveTo(this.from.x, this.from.y);
+    ctx.lineTo(this.to.x, this.to.y);
+
+    ctx.strokeStyle =
+      this.weight > 0
+        ? `rgba(34,211,238,${alpha})`
+        : `rgba(244,114,182,${alpha})`;
+
+    ctx.lineWidth = 1 + Math.abs(this.weight) * 2;
+
+    ctx.stroke();
+
+    // Pulses
+    for (const p of this.pulses) {
+      const x = this.from.x + dx * p.t;
+      const y = this.from.y + dy * p.t;
+
+      ctx.beginPath();
+      ctx.arc(x, y, 4 + p.intensity * 4, 0, Math.PI * 2);
+
+      const glow = ctx.createRadialGradient(
+        x,
+        y,
+        0,
+        x,
+        y,
+        16
+      );
+
+      glow.addColorStop(
+        0,
+        `rgba(167,139,250,0.95)`
+      );
+
+      glow.addColorStop(
+        1,
+        `rgba(167,139,250,0)`
+      );
+
+      ctx.fillStyle = glow;
+      ctx.fill();
+    }
+  }
+}
+
+/* =========================================================
+   Build Neural Network
+========================================================= */
+
+const layers = [5, 8, 10, 8, 4];
+
+const neurons = [];
+const connections = [];
+
+function buildNetwork() {
+  neurons.length = 0;
+  connections.length = 0;
+
+  const layerSpacing = canvas.width / (layers.length + 1);
+
+  for (let l = 0; l < layers.length; l++) {
+    const layerNeurons = [];
+
+    const count = layers[l];
+    const verticalSpacing = canvas.height / (count + 1);
+
+    for (let i = 0; i < count; i++) {
+      const x = layerSpacing * (l + 1);
+      const y = verticalSpacing * (i + 1);
+
+      layerNeurons.push(
+        new Neuron(x, y, l, i)
+      );
+    }
+
+    neurons.push(layerNeurons);
+  }
+
+  // Fully connect layers
+  for (let l = 0; l < neurons.length - 1; l++) {
+    for (const from of neurons[l]) {
+      for (const to of neurons[l + 1]) {
+        connections.push(
+          new Connection(from, to)
+        );
+      }
+    }
+  }
+}
+
+buildNetwork();
+
+window.addEventListener("resize", buildNetwork);
+
+/* =========================================================
+   Training + Forward Propagation Simulation
+========================================================= */
+
+let lastTime = performance.now();
+let pulseTimer = 0;
+
+function simulateForwardPass() {
+  // Start pulses from input layer
+  for (const c of connections) {
+    if (c.from.layer === 0) {
+      if (Math.random() < 0.45) {
+        c.triggerPulse();
+        c.from.excite(0.8);
+      }
+    } else {
+      // Chain reactions
+      if (Math.random() < 0.06) {
+        c.triggerPulse();
+      }
+    }
+  }
+}
+
+/* =========================================================
+   Animation Loop
+========================================================= */
+
+function animate(now) {
+  const dt = now - lastTime;
+  lastTime = now;
+
+  // Background fade
+  ctx.fillStyle = "rgba(2,6,23,0.18)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  pulseTimer += dt;
+
+  if (pulseTimer > 260) {
+    simulateForwardPass();
+    pulseTimer = 0;
+  }
+
+  // Animated grid background
+  drawGrid(now);
+
+  // Update connections
+  for (const c of connections) {
+    c.update(dt);
+  }
+
+  // Draw connections
+  for (const c of connections) {
+    c.draw();
+  }
+
+  // Update neurons
+  for (const layer of neurons) {
+    for (const n of layer) {
+      n.update(dt);
+    }
+  }
+
+  // Draw neurons
+  for (const layer of neurons) {
+    for (const n of layer) {
+      n.draw();
+    }
+  }
+
+  requestAnimationFrame(animate);
+}
+
+/* =========================================================
+   Background Grid
+========================================================= */
+
+function drawGrid(time) {
+  const spacing = 40;
+
+  ctx.save();
+
+  ctx.lineWidth = 1;
+
+  for (let x = 0; x < canvas.width; x += spacing) {
+    const alpha =
+      0.03 +
+      Math.sin(time * 0.0005 + x * 0.01) * 0.01;
+
+    ctx.strokeStyle =
+      `rgba(100,150,255,${alpha})`;
+
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, canvas.height);
+    ctx.stroke();
+  }
+
+  for (let y = 0; y < canvas.height; y += spacing) {
+    const alpha =
+      0.03 +
+      Math.sin(time * 0.0005 + y * 0.01) * 0.01;
+
+    ctx.strokeStyle =
+      `rgba(100,150,255,${alpha})`;
+
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(canvas.width, y);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+requestAnimationFrame(animate);
+</script>
+
+</body>
+</html>
+
